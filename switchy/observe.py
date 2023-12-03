@@ -331,7 +331,7 @@ class EventListener(object):
             con.subscribe(self._handlers)
         return con
 
-    def add_handler(self, evname, handler):
+    def add_handler(self, evname, handler, override):
         """Register an event handler for events of type `evname`.
         If a handler for `evname` already exists or if `evname` is in the
         unsubscribe list an error will be raised.
@@ -344,7 +344,8 @@ class EventListener(object):
                 "'{}' events have been unsubscribed for this listener"
                 .format(evname))
         # TODO: add a force option which allows overwrite?
-        if evname in self._handlers:
+        # ldm: yes
+        if not override and evname in self._handlers:
             raise ConfigurationError(
                 "handler '{}' for events of type '{}' already exists"
                 .format(self._handlers[evname], evname))
