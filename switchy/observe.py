@@ -130,7 +130,7 @@ class EventListener(object):
     def default_handlers(self):
         """The map of default event handlers described by this listener
         """
-        return {evname: cb for evname, cbtype, cb in marks.get_callbacks(
+        return {evname: [cb] for evname, cbtype, cb in marks.get_callbacks(
                 self, skip=('default_handlers',), only='handler')}
 
     __repr__ = con_repr
@@ -331,7 +331,7 @@ class EventListener(object):
             con.subscribe(self._handlers)
         return con
 
-    def add_handler(self, evname, handler, override):
+    def add_handler(self, evname, handler, replace = False):
         """Register an event handler for events of type `evname`.
         If a handler for `evname` already exists or if `evname` is in the
         unsubscribe list an error will be raised.
@@ -344,16 +344,16 @@ class EventListener(object):
                 "'{}' events have been unsubscribed for this listener"
                 .format(evname))
         # TODO: add a force option which allows overwrite?
-        # ldm: yes
-        if not override and evname in self._handlers:
-            raise ConfigurationError(
-                "handler '{}' for events of type '{}' already exists"
-                .format(self._handlers[evname], evname))
+        # ldm: replace instead
+        if replace:
+            self._handlers[evname] = [handler]
+        else:
+            handlers = self._handlers.get(evname, [])
+            handlers.append(handler)
+            self._handlers[evname] = handlers
 
         if evname not in self._rx_con._sub:
             self._rx_con.subscribe((evname,))
-        # add handler to active map
-        self._handlers[evname] = handler
 
     def add_callback(self, evname, ident, callback, *args, **kwargs):
         '''Register a callback for events of type `evname` to be called
@@ -464,9 +464,10 @@ class EventListener(object):
                 if evname:
                     consumed = self._process_event(e, evname)
                 else:
-                    self.log.warn("received unamed event '{}'?".format(e))
+                    self.log.warn("received unnamed event '{}'?".format(e))
+                    consumed = []
                 # append events which are not consumed
-                if not consumed:
+                if not any(consumed):
                     # store up to the last 1k of each event type
                     self.events.setdefault(
                         evname, deque(maxlen=1000)).append((e, time.time()))
@@ -494,15 +495,19 @@ class EventListener(object):
         else:
             self._epoch = self._fs_time = get_event_time(e)
 
-        consumed = False  # is this event consumed by a handler/callback
+        all_consumed = []
         if 'CUSTOM' in evname:
             evname = e.getHeader('Event-Subclass')
         self.log.debug("receive event '{}'".format(evname))
-
         uid = e.getHeader('Unique-ID')
 
-        handler = self._handlers.get(evname, False)
-        if handler:
+        _handler = self._handlers.get(evname, [])
+        handlers = _handler if isinstance(_handler, list) else [_handler]
+
+        self.log.debug(f"Handlers for {evname}: {handlers}")
+
+        for handler in handlers:
+            consumed = False  # is this event consumed by a handler/callback
             self.log.debug("handler is '{}'".format(handler))
             try:
                 consumed, ret = utils.uncons(*handler(e))  # invoke handler
@@ -546,9 +551,8 @@ class EventListener(object):
                     "Failed to process event {} with uid {}"
                     .format(evname, uid)
                 )
-            return consumed
-        else:
-            self.log.error("Unknown event '{}'".format(evname))
+            all_consumed.append(consumed)
+        return all_consumed
 
     def get_id(self, e, default=None):
         """Acquire the client/consumer (app) id for event :var:`e`
